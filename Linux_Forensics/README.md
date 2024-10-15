@@ -32,7 +32,7 @@ python3 timeline_graph.py -start-date 11.10.2024 -end-date 15.10.2024 -u cleverg
 python3 timeline_light.py -start-date 11.10.2024 -end-date 15.10.2024 -u clevergod -html -f timeline_report.html
 ```
 **Скриншоты**
-Forensics/Linux_Forensics/scr/timeline_graph.png
-Forensics/Linux_Forensics/scr/timeline_light.png
+/Linux_Forensics/scr/timeline_graph.png
+/Linux_Forensics/scr/timeline_light.png
 
 Так же оригинальный скрипт `timeline_orig.py` по мотивам Jaroslav Shmelev
