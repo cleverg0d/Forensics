@@ -18,6 +18,8 @@
 ```bash
 python3 timeline_graph.py -start-date 11.10.2024 -end-date 15.10.2024 -u clevergod -html -f timeline_report.html -graph
 ```
+**Скриншот**
+![Timeline Graph](/Linux_Forensics/scr/timeline_graph.png)
 
 ### 2. `timeline_light.py`
 Этот скрипт является упрощенной версией `timeline_graph.py` без зависимости от библиотек для построения графиков, что позволяет его использовать на системах, где невозможно установить эти библиотеки.
@@ -31,8 +33,7 @@ python3 timeline_graph.py -start-date 11.10.2024 -end-date 15.10.2024 -u cleverg
 ```bash
 python3 timeline_light.py -start-date 11.10.2024 -end-date 15.10.2024 -u clevergod -html -f timeline_report.html
 ```
-**Скриншоты**
-![Timeline Graph](/Linux_Forensics/scr/timeline_graph.png)
+**Скриншот**
 ![Timeline Light](/Linux_Forensics/scr/timeline_light.png)
 
-Так же оригинальный скрипт `timeline_orig.py` по мотивам Jaroslav Shmelev
+Так же оригинальный скрипт `timeline_orig.py` по мотивам [Jaroslav Shmelev](https://gist.github.com/hummelchen/9c1a29c3760499491b9ff80547221887)
