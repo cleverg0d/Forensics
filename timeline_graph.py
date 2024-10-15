@@ -2,7 +2,7 @@
 
 import csv
 import base64
-from subprocess import Popen, PIPE, DEVNULL
+from subprocess import Popen, PIPE, DEVNULL, TimeoutExpired
 import re
 import sys
 import argparse
@@ -12,6 +12,7 @@ import html
 import io
 import hashlib
 import matplotlib.pyplot as plt
+from collections import namedtuple
 
 # Парсинг аргументов командной строки
 parser = argparse.ArgumentParser(description="Скрипт для сбора временной шкалы файлов.")
@@ -34,6 +35,9 @@ if len(sys.argv) == 1:
     parser.print_help()
     sys.exit(1)
 
+# Определение структуры данных временной шкалы
+TimelineEntry = namedtuple('TimelineEntry', ['timestamp', 'user', 'permissions', 'size', 'filename'])
+
 # Функция для получения хэш-суммы файла
 def get_file_hash(file_path, hash_algorithm='md5'):
     try:
@@ -51,15 +55,6 @@ def get_file_hash(file_path, hash_algorithm='md5'):
     except Exception:
         return None
 
-# Функция для показа изменённых файлов
-def show_changed_files():
-    process = Popen(["dpkg", "--verify"], stdout=PIPE, stderr=PIPE)
-    output, err = process.communicate()
-    files = set(re.findall(r"/.*", output.decode('utf-8')))
-    inaccessible = set(re.findall(r"unable to open (.*) for hash", err.decode("utf-8")))
-    for fn in files - inaccessible:
-        print(fn)
-
 # Функция получения файлов, установленных пакетами
 def get_package_files():
     process = Popen(["dpkg", "-S", "*"], stdout=PIPE, stderr=DEVNULL)
@@ -74,17 +69,19 @@ def get_timeline():
             exclude_args += ['-not', '-path', f'{path}/*']
 
     process = Popen(["find", "/", "-xdev"] + exclude_args + ["-type", "f", "-printf", "%C@;%y%m;%u;%s;%p\n"], stdout=PIPE, stderr=PIPE)
-    output, error_output = process.communicate()
+    try:
+        output, error_output = process.communicate(timeout=600)
+    except TimeoutExpired:
+        process.kill()
+        output, error_output = process.communicate()
 
-    # Отладочный вывод ошибок от find
+    # Ограничение вывода ошибок для повышения безопасности в продакшене
     if error_output:
-        print("Errors from find command:", error_output.decode("utf-8"))
+        print("Errors from find command: <hidden for security reasons>")
 
     result = output.decode("utf-8").split("\n")[:-1]
     if len(result) == 0:
         print("No data collected by find command.")
-    else:
-        print("First 10 entries from find command:", result[:10])
 
     return result
 
@@ -103,12 +100,6 @@ def show_timeline():
 
     print("Files cnt:", len(timeline))
     
-    # Добавляем отладочный вывод первых 10 записей, чтобы понять, что вернул `find`
-    if len(timeline) > 0:
-        print("First 10 entries from find command:", timeline[:10])
-    else:
-        print("No entries found by find command.")
-
     # Преобразование временных рамок, если они заданы
     start_ts = int(datetime.datetime.strptime(args.start_date, '%d.%m.%Y').timestamp()) if args.start_date else None
     end_ts = int(datetime.datetime.strptime(args.end_date, '%d.%m.%Y').timestamp()) if args.end_date else None
@@ -131,7 +122,7 @@ def show_timeline():
             continue
         if end_ts and ts > end_ts:
             continue
-        filtered_timeline.append((ts, user, perm, size, fname))
+        filtered_timeline.append(TimelineEntry(ts, user, perm, size, fname))
 
     print("Filtered timeline:", len(filtered_timeline))
     
@@ -154,12 +145,11 @@ def show_timeline():
         visualize_timeline(filtered_timeline)
     else:
         outfile = args.f if args.f else sys.stdout
-        for line in sorted(filtered_timeline, reverse=True):
-            ts, user, perm, size, fname = line
-            size_fmt = sizeof_fmt(int(size))
-            ctime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-            file_hash = get_file_hash(fname, args.hash) if args.hash else 'N/A'
-            print("{:>8}\t{}\t{:>10}\t{:>20}\t{}\t{}".format(user, perm, size_fmt, ctime, fname, file_hash), file=outfile)
+        for entry in sorted(filtered_timeline, reverse=True):
+            size_fmt = sizeof_fmt(int(entry.size))
+            ctime = datetime.datetime.fromtimestamp(entry.timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            file_hash = get_file_hash(entry.filename, args.hash) if args.hash else 'N/A'
+            print("{:>8}\t{}\t{:>10}\t{:>20}\t{}\t{}".format(entry.user, entry.permissions, size_fmt, ctime, entry.filename, file_hash), file=outfile)
 
 # Функция для генерации HTML отчета с графиком
 def generate_html_report(timeline_data, output_file):
@@ -180,12 +170,11 @@ def generate_html_report(timeline_data, output_file):
         ''')
         
         for entry in timeline_data:
-            ts, user, perm, size, fname = entry
-            size_fmt = sizeof_fmt(int(size))
-            ctime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-            file_hash = get_file_hash(fname, args.hash) if args.hash else 'N/A'
-            f.write(f"<tr><td>{html.escape(user)}</td><td>{html.escape(perm)}</td>"
-                    f"<td>{html.escape(size_fmt)}</td><td>{html.escape(ctime)}</td><td>{html.escape(fname)}</td>"
+            size_fmt = sizeof_fmt(int(entry.size))
+            ctime = datetime.datetime.fromtimestamp(entry.timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            file_hash = get_file_hash(entry.filename, args.hash) if args.hash else 'N/A'
+            f.write(f"<tr><td>{html.escape(entry.user)}</td><td>{html.escape(entry.permissions)}</td>"
+                    f"<td>{html.escape(size_fmt)}</td><td>{html.escape(ctime)}</td><td>{html.escape(entry.filename)}</td>"
                     f"<td>{html.escape(file_hash)}</td></tr>")
         
         f.write("</table></body></html>")
@@ -196,11 +185,10 @@ def generate_csv_report(timeline_data, output_file):
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(['Пользователь', 'Права', 'Размер', 'Время изменения', 'Файл', 'Хэш'])
         for entry in timeline_data:
-            ts, user, perm, size, fname = entry
-            size_fmt = sizeof_fmt(int(size))
-            ctime = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-            file_hash = get_file_hash(fname, args.hash) if args.hash else 'N/A'
-            csvwriter.writerow([user, perm, size_fmt, ctime, fname, file_hash])
+            size_fmt = sizeof_fmt(int(entry.size))
+            ctime = datetime.datetime.fromtimestamp(entry.timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            file_hash = get_file_hash(entry.filename, args.hash) if args.hash else 'N/A'
+            csvwriter.writerow([entry.user, entry.permissions, size_fmt, ctime, entry.filename, file_hash])
 
 # Функция для визуализации временной шкалы
 def visualize_timeline(timeline_data):
@@ -208,8 +196,8 @@ def visualize_timeline(timeline_data):
         print("No data to generate a graph.")
         return
 
-    timestamps = [datetime.datetime.fromtimestamp(entry[0]) for entry in timeline_data]
-    file_sizes = [int(entry[3]) for entry in timeline_data]
+    timestamps = [datetime.datetime.fromtimestamp(entry.timestamp) for entry in timeline_data]
+    file_sizes = [int(entry.size) for entry in timeline_data]
 
     plt.figure(figsize=(10, 6))
     plt.scatter(timestamps, file_sizes, c='blue', alpha=0.5)
@@ -223,8 +211,8 @@ def visualize_timeline(timeline_data):
 
 # Функция для создания графика и кодирования его в base64
 def generate_timeline_graph(timeline_data):
-    timestamps = [datetime.datetime.fromtimestamp(entry[0]) for entry in timeline_data]
-    file_sizes = [int(entry[3]) for entry in timeline_data]
+    timestamps = [datetime.datetime.fromtimestamp(entry.timestamp) for entry in timeline_data]
+    file_sizes = [int(entry.size) for entry in timeline_data]
 
     plt.figure(figsize=(10, 6))
     plt.scatter(timestamps, file_sizes, c='blue', alpha=0.5)
@@ -243,10 +231,7 @@ def generate_timeline_graph(timeline_data):
 
 # Основная функция, обрабатывающая входные аргументы
 def main():
-    if args.c:
-        show_changed_files()
-    else:
-        show_timeline()
+    show_timeline()
 
 if __name__ == "__main__":
     main()
